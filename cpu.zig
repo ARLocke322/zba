@@ -12,11 +12,10 @@ pub const Cpu = struct {
         std.debug.print("Executing instruction: 0x{x}\n", .{instruction});
         // const cond: u4 = @truncate(instruction >> 28);
         // const op: u1 = @truncate((instruction >> 25) & 0x01);
-        const op1: u5 = @truncate((instruction >> 25) & 0x7);
+        const op1: u3 = @truncate((instruction >> 26) & 0x3);
         switch (op1) {
-            0x0, 0x1 => { // Data processing & Misc
-                self.decode_data_processing(instruction);
-            },
+            0x0 => self.decode_data_processing(instruction),
+            0x1 => self.decode_load_store_word(instruction),
             else => {},
         }
     }
@@ -26,6 +25,21 @@ pub const Cpu = struct {
         switch (op) {
             0x0 => {},
             0x1 => self.decode_immediate_processing(instruction),
+        }
+    }
+
+    fn decode_load_store_word(self: *Cpu, instruction: u32) void {
+        const a: u1 = @truncate((instruction >> 25) & 0x01);
+        const b: u1 = @truncate((instruction >> 4) & 0x01);
+        const op1: u5 = @truncate((instruction >> 20) & 0x1F);
+        const r_n: u4 = @truncate((instruction >> 16) & 0xF);
+        const r_t: u4 = @truncate((instruction >> 12) & 0xF);
+
+        const register = a == 1;
+
+        switch (op1) {
+            0x0, 0x8, 0x10, 0x12, 0x18, 0x1A => self.execute_STR(r_n, register),
+            else => {},
         }
     }
 
@@ -46,11 +60,6 @@ pub const Cpu = struct {
         const s: u1 = @truncate((instruction >> 20) & 0x1); // 20
         const r_d: u4 = @truncate((instruction >> 12) & 0xF); // 12-15
         const imm12: u12 = @truncate((instruction & 0xFFF)); // 0-11
-
-        // const update_flags: bool = s == 1;
-        // const write: bool = (op >> 3) & 1 == 0;
-        // const reverse: bool = (op >> 3) & 1 == 1;
-        // const carry: bool = (op >> 1) & 1 == 1;
 
         const update_flags: bool = s == 1;
         const write = switch (op) {
