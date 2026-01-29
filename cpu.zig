@@ -2,89 +2,213 @@ const std = @import("std");
 
 pub const Cpu = struct {
     r: [16]u32,
+    cpsr: [32]u1,
 
     pub fn init() Cpu {
-        return Cpu{ .r = [_]u32{0} ** 16 };
+        return Cpu{ .r = [_]u32{0} ** 16, .cpsr = [_]u1{0} ** 32 };
     }
 
-    pub fn decode_execute(self: *Cpu, instruction: u32) !void {
-        const cond: u4 = @truncate(instruction >> 28);
-        switch (cond) {
-            0xF => { // unconditional
-
-            },
-            else => { // conditional
-                try self.de_conditional(instruction);
-            },
-        }
-    }
-
-    pub fn set_reg(self: *Cpu, index: usize, value: u32) void {
-        self.r[index] = value;
-    }
-
-    fn de_conditional(self: *Cpu, instruction: u32) !void {
-        const op1: u3 = @truncate((instruction >> 25) & 0x07); // Bits 25-27
+    pub fn decode_execute(self: *Cpu, instruction: u32) void {
+        std.debug.print("Executing instruction: 0x{x}\n", .{instruction});
+        // const cond: u4 = @truncate(instruction >> 28);
+        // const op: u1 = @truncate((instruction >> 25) & 0x01);
+        const op1: u5 = @truncate((instruction >> 25) & 0x7);
         switch (op1) {
-            0x00...0x01 => { // 00x
-                try self.de_dp(instruction);
-            },
-            0x02 => { // 010
-            },
-            0x03 => { // 011
-            },
-            0x04...0x05 => { // 10x
-            },
-            0x06...0x07 => { // 11x
-            },
-        }
-    }
-
-    fn de_dp(self: *Cpu, instruction: u32) !void { // Data Processing & Misc
-        const op: u1 = @truncate((instruction >> 25) & 0x01);
-        const op1: u5 = @truncate((instruction >> 20) & 0x1F);
-        switch (op) {
-            0 => {},
-            1 => {
-                switch (op1) {
-                    0x10 => {},
-                    0x14 => {},
-                    0x12, 0x16 => {},
-                    else => {
-                        try self.de_dp_imm(instruction);
-                    },
-                }
-            },
-        }
-    }
-
-    fn de_dp_imm(self: *Cpu, instruction: u32) !void {
-        if ((instruction >> 25) & 0x07 != 0x1) return error.InvalidOpcode;
-        // const cond: u4 = @truncate(instruction >> 28); // 28-31
-        const op: u5 = @truncate((instruction >> 20) & 0x1F); // 20-24
-        const r_n: u4 = @truncate((instruction >> 16) & 0x0F); // 16-19
-        switch (op) {
-            0x00...0x01 => { // Bitwise AND
-                // ARM
-                // const s: u1 = (instruction >> 20) & 0x01; // 20
-                const r_d: u4 = @truncate((instruction >> 12) & 0x0F); // 12-15
-                const imm12: u12 = @truncate((instruction & 0xFFF));
-
-                if (Cpu.eval_cond()) {
-                    self.r[r_d] = self.r[r_n] & Cpu.expand_imm(imm12);
-                }
+            0x0, 0x1 => { // Data processing & Misc
+                self.decode_data_processing(instruction);
             },
             else => {},
         }
     }
 
+    fn decode_data_processing(self: *Cpu, instruction: u32) void {
+        const op: u1 = @truncate((instruction >> 25) & 0x01);
+        switch (op) {
+            0x0 => {},
+            0x1 => self.decode_immediate_processing(instruction),
+        }
+    }
+
+    fn decode_immediate_processing(self: *Cpu, instruction: u32) void {
+        const op1: u5 = @truncate((instruction >> 20) & 0x1F);
+        switch (op1) {
+            0x10 => {},
+            0x14 => {},
+            0x12, 0x16 => {},
+            else => self.decode_immediate_data_processing(instruction),
+        }
+    }
+
+    fn decode_immediate_data_processing(self: *Cpu, instruction: u32) void {
+        // MANUAL INCLUDES S IN OP, I REMOVED IT
+        const op: u4 = @truncate((instruction >> 21) & 0xF); // 21-24
+        const r_n: u4 = @truncate((instruction >> 16) & 0xF); // 16-19
+        const s: u1 = @truncate((instruction >> 20) & 0x1); // 20
+        const r_d: u4 = @truncate((instruction >> 12) & 0xF); // 12-15
+        const imm12: u12 = @truncate((instruction & 0xFFF)); // 0-11
+
+        // const update_flags: bool = s == 1;
+        // const write: bool = (op >> 3) & 1 == 0;
+        // const reverse: bool = (op >> 3) & 1 == 1;
+        // const carry: bool = (op >> 1) & 1 == 1;
+
+        const update_flags: bool = s == 1;
+        const write = switch (op) {
+            0x8, 0x9, 0xA, 0xB => false, // TST, TEQ, CMP, CMN
+            else => true,
+        };
+        const reverse = op == 0x3 or op == 0x7; // RSB, RSC
+        const carry = op == 0x5 or op == 0x6 or op == 0x7; // SBC, RSC
+
+        switch (op) {
+            0x0, 0x8 => self.execute_AND(r_n, r_d, Cpu.expand_imm(imm12), update_flags, write),
+            0x1, 0x9 => self.execute_XOR(r_n, r_d, Cpu.expand_imm(imm12), update_flags, write),
+            0x2, 0x3, 0x6, 0x7, 0xA => self.execute_SUB(r_n, r_d, Cpu.expand_imm(imm12), update_flags, write, reverse, carry),
+            0x4, 0x5, 0xB => self.execute_ADD(r_n, r_d, Cpu.expand_imm(imm12), update_flags, write, carry),
+            0xC => self.execute_OR(r_n, r_d, Cpu.expand_imm(imm12), update_flags),
+            0xD => self.execute_MOV(r_d, Cpu.expand_imm(imm12), update_flags),
+            0xE => self.execute_BIC(r_n, r_d, Cpu.expand_imm(imm12), update_flags),
+            0xF => self.execute_NOT(r_d, Cpu.expand_imm(imm12), update_flags),
+        }
+    }
+
+    // --- EXECUTE METHODS ---
+
+    fn execute_AND(self: *Cpu, r_n: u32, r_d: u32, imm: u32, update_flags: bool, write: bool) void {
+        const result = self.r[r_n] & imm;
+        if (write) self.r[r_d] = result;
+        if (update_flags) self.update_NZ_flags(result);
+    }
+
+    fn execute_XOR(self: *Cpu, r_n: u32, r_d: u32, imm: u32, update_flags: bool, write: bool) void {
+        const result = self.r[r_n] ^ imm;
+        if (write) self.r[r_d] = result;
+        if (update_flags) self.update_NZ_flags(result);
+    }
+
+    fn execute_OR(self: *Cpu, r_n: u32, r_d: u32, imm: u32, update_flags: bool) void {
+        const result = self.r[r_n] | imm;
+        self.r[r_d] = result;
+        if (update_flags) self.update_NZ_flags(result);
+    }
+
+    fn execute_MOV(self: *Cpu, r_d: u32, imm: u32, update_flags: bool) void {
+        const result = imm;
+        self.r[r_d] = result;
+        if (update_flags) self.update_NZ_flags(result);
+    }
+
+    fn execute_BIC(self: *Cpu, r_n: u32, r_d: u32, imm: u32, update_flags: bool) void {
+        const result = self.r[r_n] & ~imm;
+        self.r[r_d] = result;
+        if (update_flags) self.update_NZ_flags(result);
+    }
+
+    fn execute_NOT(self: *Cpu, r_d: u32, imm: u32, update_flags: bool) void {
+        const result = ~imm;
+        self.r[r_d] = result;
+        if (update_flags) self.update_NZ_flags(result);
+    }
+
+    fn execute_SUB(
+        self: *Cpu,
+        r_n: u32,
+        r_d: u32,
+        imm: u32,
+        update_flags: bool,
+        write: bool,
+        reverse: bool,
+        carry: bool,
+    ) void {
+        @setRuntimeSafety(false);
+        const op1: u32 = if (reverse) imm else self.r[r_n];
+        const op2: u32 = if (reverse) self.r[r_n] else imm;
+
+        const result = if (carry)
+            op1 - op2 - @as(u32, (1 - self.cpsr[29]))
+        else
+            op1 - op2;
+
+        if (write) self.r[r_d] = result;
+        if (update_flags) self.update_SUB_flags(op1, op2, result);
+    }
+
+    fn execute_ADD(
+        self: *Cpu,
+        r_n: u32,
+        r_d: u32,
+        imm: u32,
+        update_flags: bool,
+        write: bool,
+        carry: bool,
+    ) void {
+        @setRuntimeSafety(false);
+        const op1: u32 = self.r[r_n];
+        const op2: u32 = imm;
+        const result = if (carry) op1 + op2 + self.cpsr[29] else op1 + op2;
+
+        if (write) self.r[r_d] = result;
+        if (update_flags) self.update_ADD_flags(op1, op2, result);
+    }
+
+    // --- FLAG UPDATES ---
+
+    fn update_NZ_flags(self: *Cpu, result: u32) void {
+        if (result == 0) {
+            self.cpsr[30] = 1;
+        } else self.cpsr[30] = 0;
+
+        if ((result >> 31) & 1 == 1) {
+            self.cpsr[31] = 1;
+        } else self.cpsr[31] = 0;
+    }
+
+    fn update_SUB_flags(self: *Cpu, op1: u32, op2: u32, result: u32) void {
+        const sign1 = (op1 >> 31) & 1;
+        const sign2 = (op2 >> 31) & 1;
+        const signr = (result >> 31) & 1;
+
+        if (sign1 != sign2 and sign1 != signr) {
+            self.cpsr[28] = 1;
+        } else self.cpsr[28] = 0;
+
+        if (op1 >= op2) {
+            self.cpsr[29] = 1;
+        } else self.cpsr[29] = 0;
+        if (result == 0) {
+            self.cpsr[30] = 1;
+        } else self.cpsr[30] = 0;
+
+        if (signr == 1) {
+            self.cpsr[31] = 1;
+        } else self.cpsr[31] = 0;
+    }
+
+    fn update_ADD_flags(self: *Cpu, op1: u32, op2: u32, result: u32) void {
+        const sign1 = (op1 >> 31) & 1;
+        const sign2 = (op2 >> 31) & 1;
+        const signr = (result >> 31) & 1;
+        if (sign1 == sign2 and sign1 != signr) {
+            self.cpsr[28] = 1;
+        } else self.cpsr[28] = 0;
+
+        if (result < op1) {
+            self.cpsr[29] = 1;
+        } else self.cpsr[29] = 0;
+        if (result == 0) {
+            self.cpsr[30] = 1;
+        } else self.cpsr[30] = 0;
+
+        if (signr == 1) {
+            self.cpsr[31] = 1;
+        } else self.cpsr[31] = 0;
+    }
+
+    // --- MISC HELPERS ---
+
     pub fn expand_imm(imm12: u12) u32 {
         const rotation = (imm12 >> 8) * 2;
         const imm8: u32 = imm12 & 0xFF;
         return std.math.rotr(u32, imm8, rotation);
-    }
-
-    fn eval_cond() bool {
-        return true;
     }
 };
