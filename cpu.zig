@@ -2,9 +2,10 @@ const std = @import("std");
 
 pub const Cpu = struct {
     r: [16]u32,
+    apsr: [32]u1,
 
     pub fn init() Cpu {
-        return Cpu{ .r = [_]u32{0} ** 16 };
+        return Cpu{ .r = [_]u32{0} ** 16, .apsr = [_]u1{0} ** 32 };
     }
 
     pub fn decode_execute(self: *Cpu, instruction: u32) !void {
@@ -66,7 +67,7 @@ pub const Cpu = struct {
         switch (op) {
             0x00...0x01 => { // Bitwise AND
                 // ARM
-                // const s: u1 = (instruction >> 20) & 0x01; // 20
+                const s: u1 = (instruction >> 20) & 0x01; // 20
                 const r_d: u4 = @truncate((instruction >> 12) & 0x0F); // 12-15
                 const imm12: u12 = @truncate((instruction & 0xFFF));
 
