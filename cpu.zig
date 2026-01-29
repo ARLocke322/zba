@@ -8,20 +8,6 @@ pub const Cpu = struct {
         return Cpu{ .r = [_]u32{0} ** 16, .cpsr = [_]u1{0} ** 32 };
     }
 
-    pub fn decode_execute(self: *Cpu, instruction: u32) !void {
-        const cond: u4 = @truncate(instruction >> 28);
-        switch (cond) {
-            0xF => { // unconditional
-
-            },
-            else => { // conditional
-                if (Cpu.eval_cond()) {
-                    try self.de_conditional(instruction);
-                }
-            },
-        }
-    }
-
     fn de_conditional(self: *Cpu, instruction: u32) !void {
         const op1: u3 = @truncate((instruction >> 25) & 0x07); // Bits 25-27
         switch (op1) {
@@ -103,8 +89,8 @@ pub const Cpu = struct {
                 const carry: bool = (instruction >> 22) & 0x01 == 1;
                 const not_compare: bool = (instruction >> 24) & 1 == 0;
 
-                const op1: u32 = if (reverse) Cpu.expand_imm(imm12) else self.r[15];
-                const op2: u32 = if (reverse) self.r[15] else Cpu.expand_imm(imm12);
+                const op1: u32 = if (reverse) Cpu.expand_imm(imm12) else self.r[r_n];
+                const op2: u32 = if (reverse) self.r[r_n] else Cpu.expand_imm(imm12);
 
                 const result = if (carry)
                     op1 - op2 - @as(u32, (1 - self.cpsr[29]))
@@ -167,17 +153,6 @@ pub const Cpu = struct {
             }, // Add / Form PC-relative address
             0x10, 0x12, 0x14, 0x16 => {}, // DP Misc
             0x18, 0x19 => { // Bitwise OR
-                const result = self.r[r_n] | Cpu.expand_imm(imm12);
-                self.r[r_d] = result;
-                if (s == 1) {
-                    if (result == 0) {
-                        self.cpsr[30] = 1;
-                    } else self.cpsr[30] = 0;
-
-                    if ((result >> 31) & 1 == 1) {
-                        self.cpsr[31] = 1;
-                    } else self.cpsr[31] = 0;
-                }
             },
             0x1A, 0x1B => { // Move
                 const result = Cpu.expand_imm(imm12);
